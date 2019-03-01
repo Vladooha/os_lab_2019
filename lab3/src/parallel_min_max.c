@@ -15,6 +15,15 @@
 #include "find_min_max.h"
 #include "utils.h"
 
+#define COLOR "\033"
+#define _BOLD "[1"
+#define _THIN "[0"
+#define _RED ";31m"
+#define _BLUE ";34m"
+#define _GREEN ";32m"
+#define _YELLOW ";33m"
+#define _NC "[0m"
+
 int main(int argc, char **argv) {
   int seed = -1;
   int array_size = -1;
@@ -87,10 +96,21 @@ int main(int argc, char **argv) {
   int *array = malloc(sizeof(int) * array_size);
   GenerateArray(array, array_size, seed);
   int active_child_processes = 0;
+  
+  printf("Array:\n");
+  for (int i = 0; i < array_size; ++i) {
+      printf("%d\n", array[i]);
+  }
 
   struct timeval start_time;
   gettimeofday(&start_time, NULL);
 
+  int pipefd[2];
+  pipe(pipefd);
+  
+  //int pids[999];
+
+  int array_piece = array_size / pnum > 0 ? array_size / pnum : 1;
   for (int i = 0; i < pnum; i++) {
     pid_t child_pid = fork();
     if (child_pid >= 0) {
@@ -98,14 +118,55 @@ int main(int argc, char **argv) {
       active_child_processes += 1;
       if (child_pid == 0) {
         // child process
-
+        
+        //pids[i] = getpid();
+        //printf("PID: %d\n", pids[i]);
+        
         // parallel somehow
-
+        
+        int begin = i * array_piece < array_size ? i * array_piece : array_size;
+        int end = (i + 1) * array_piece < array_size ? (i + 1) * array_piece : array_size;
+          
+        struct MinMax buff;
+        
+        if (begin == array_size) {
+            buff = GetMinMax(array, 0, 1);
+        } else {
+            buff = GetMinMax(array, begin, end);
+        }
+        /*
+ printf(COLOR _BOLD _RED "\n\tPARENT: %d, this->PID: %d, CHILD: %d || min: %i, max: %i\n" COLOR _NC,\
+                                                getppid(),\
+                                                getpid(),\
+                                                pids[i],\
+                                                buff.min,\
+                                                buff.max);
+                                                */
         if (with_files) {
           // use files here
+          
+          //printf("B4 char*\n");
+          
+          char p[4];
+          //itoa(i, p, 3);
+          snprintf(p, sizeof(p), "%d", i);
+          char p1[8] = "fork";
+          strcat(p1, p);
+
+          //printf("B4 file\n");          
+          FILE *fp = fopen(p1, "wb");
+          fwrite(&buff, sizeof(struct MinMax), 1, fp);
+          int fcls = fclose(fp);
+          //printf("Fclose: %d\n", fcls);
+          
+          printf("%s - child min: %d, child max: %d\n", p1, buff.min, buff.max);
         } else {
           // use pipe here
+          
+          write(pipefd[1], &buff, sizeof(struct MinMax));
         }
+        
+        //printf("max: %d, min: %d\n", buff.max, buff.min);
         return 0;
       }
 
@@ -115,25 +176,78 @@ int main(int argc, char **argv) {
     }
   }
 
+  int counter = 0;
   while (active_child_processes > 0) {
     // your code here
-
+    wait(NULL);
+    //kill(pids[counter], SIGKILL);
+    
     active_child_processes -= 1;
   }
+  
+  /*
+  if (with_files) {
+      char p[4];
+      snprintf(p, sizeof(p), "%d", 0);
+      char p1[8] = "fork";
+      strcat(p1, p);
+      
+      while (!access(p1, F_OK)) {
+          printf("%s - reading unavailable!\n", p1);
+      }
+      
+      printf("Reading available!\n");
+  }
+  */
 
   struct MinMax min_max;
   min_max.min = INT_MAX;
   min_max.max = INT_MIN;
 
+  int min = INT_MAX;
+  int max = INT_MIN;
+  
+  
+  
   for (int i = 0; i < pnum; i++) {
-    int min = INT_MAX;
-    int max = INT_MIN;
-
+    struct MinMax buff;
+      
     if (with_files) {
       // read from files
+      
+      //printf("B4 str\n");
+      
+      char p[4];
+      //itoa(i, p, 3);
+      snprintf(p, sizeof(p), "%d", i);
+      char p1[8] = "fork";
+      strcat(p1, p);
+
+      //printf("B4 file\n");
+      
+      
+      
+      FILE *fp = fopen(p1, "rb");
+      if (fp == NULL) {
+          printf("%s can't be open\n", p1);
+      } else {
+          printf("%s opened\n", p1);
+      }
+      fseek(fp, 0, SEEK_SET);
+      size_t frd = fread(&buff, sizeof(struct MinMax), 1, fp);
+      //printf("Fread: %lu\n", frd);
+      fclose(fp);
+      
+      //printf("After file\n");
+      printf(COLOR _BOLD _YELLOW  "Local min: %d, local max: %d" COLOR _NC "\n", buff.min, buff.max);
     } else {
       // read from pipes
+      
+      read(pipefd[0], &buff, sizeof(buff));
     }
+
+    min = buff.min;
+    max = buff.max;
 
     if (min < min_max.min) min_max.min = min;
     if (max > min_max.max) min_max.max = max;
