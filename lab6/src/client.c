@@ -17,6 +17,52 @@ struct Server {
   int port;
 };
 
+typedef struct {
+    struct sockaddr_in server;
+    uint64_t begin;
+    uint64_t end;
+    uint64_t mod;
+} Data;
+
+uint64_t ExchangeData(Data* mail){
+    int sck = socket(AF_INET, SOCK_STREAM, 0);
+    if (sck < 0) {
+      fprintf(stderr, "Socket creation failed!\n");
+      exit(1);
+    }
+
+    if (connect(sck, (struct sockaddr *)&(mail->server), sizeof(struct sockaddr)) < 0) {
+      fprintf(stderr, "Connection failed\n");
+      exit(1);
+    }
+
+
+    char task[sizeof(uint64_t) * 3];
+    memcpy(task, &mail->begin, sizeof(uint64_t));
+    memcpy(task + sizeof(uint64_t), &mail->end, sizeof(uint64_t));
+    memcpy(task + 2 * sizeof(uint64_t), &mail->mod, sizeof(uint64_t));
+
+    if (send(sck, task, sizeof(task), 0) < 0) {
+      fprintf(stderr, "Send failed\n");
+      exit(1);
+    }
+
+    char response[sizeof(uint64_t)];
+    if (recv(sck, response, sizeof(response), 0) < 0) {
+      fprintf(stderr, "Recieve failed\n");
+      exit(1);
+    }
+
+    // TODO: from one server
+    // unite results
+    uint64_t answer = 0;
+    memcpy(&answer, response, sizeof(uint64_t));
+    printf("answer: %llu\n", answer);
+
+    close(sck);
+    return answer;
+}
+
 uint64_t MultModulo(uint64_t a, uint64_t b, uint64_t mod) {
   uint64_t result = 0;
   a = a % mod;
@@ -129,7 +175,7 @@ int main(int argc, char **argv) {
       case 2:
         memcpy(servers, optarg, strlen(optarg));
         
-        serverPortList = ReadFromFile(servers);
+        serverPortList = ReadFileStrings(servers);
         char** serverPortListTmp = serverPortList;
         for(int i = 1; *serverPortListTmp != NULL; ++i) {
             printf("Server #%d: %s\n", i, *serverPortListTmp);
@@ -164,31 +210,31 @@ int main(int argc, char **argv) {
   //struct Server *to = malloc(sizeof(struct Server) * servers_num);
   // End of Legacy
   
-  struct Server *to = malloc(sizeof(struct Server) * serversCount);
+  struct Server *to = malloc(sizeof(struct Server) * serverCount);
   // TODO: delete this and parallel work between servers
   // Legacy
   //to[0].port = 20001;
   //memcpy(to[0].ip, "127.0.0.1", sizeof("127.0.0.1"));
   // End of Legacy
   
-  for(int i = 0; i < servers_num; i++){
-      char* adressParts = strtok(server_port_list[i],":");
+  for(int i = 0; i < serverCount; i++){
+      char* adressParts = strtok(serverPortList[i],":");
       strcpy(to[i].ip, adressParts);
       adressParts = strtok(NULL,":");
-      to[i].port = atoi(addr_part);
+      to[i].port = atoi(adressParts);
   }
 
   // TODO: work continiously, rewrite to make parallel
   
   uint64_t numsPerServer;
 
-  numsPerServer = k/serversCount;
-  if(k % serversCount != 0)
+  numsPerServer = k/serverCount;
+  if(k % serverCount != 0)
     numsPerServer++;
           
-  pthread_t threads[servers_num];
-  Mail mail2server[servers_num];
-  uint64_t partial_res[servers_num];
+  pthread_t threads[serverCount];
+  Data mail2server[serverCount];
+  uint64_t partial_res[serverCount];
   
   // Legacy
   /*
@@ -250,7 +296,7 @@ int main(int argc, char **argv) {
  
   bool isKReached = false;
   uint64_t usedServersCount = serverCount;
-  for (int i = 0; i < serversCount && !isKReached; i++) {
+  for (int i = 0; i < serverCount && !isKReached; i++) {
     struct hostent *hostname = gethostbyname(to[i].ip);
     if (hostname == NULL) {
       fprintf(stderr, "gethostbyname failed with %s\n", to[i].ip);
@@ -285,7 +331,7 @@ int main(int argc, char **argv) {
         } else {
             mail2server[i].end = k;
             isKReached = true;
-            usedServersCount = i;
+            usedServersCount = i + 1;
         }
     }
       
@@ -299,10 +345,10 @@ int main(int argc, char **argv) {
                                     mail2server[i].mod);
     
     
-    pthread_create(&threads[i], NULL, ConnectAndSR, (void *)&mail2server[i]);
+    pthread_create(&threads[i], NULL, ExchangeData, (void *)&mail2server[i]);
   }
   
-  for (int i = 0; i < usedServerCount; ++i) {
+  for (int i = 0; i < usedServersCount; ++i) {
     pthread_join(threads[i], (void **)&partial_res[i]);
     printf("Server#%d result: %llu\n", i, partial_res[i]);
   }
@@ -310,7 +356,7 @@ int main(int argc, char **argv) {
   free(to);
   
   uint64_t result = 1;
-  for(int i = 0; i < usedServerCount; i++) {
+  for(int i = 0; i < usedServersCount; i++) {
     result *= partial_res[i]; 
     result %= mod;      
   }
